@@ -22,6 +22,7 @@ from app.settings import get_settings
 
 
 
+
 def _pipeline() -> IntakePipeline:
     s = get_settings()
     return IntakePipeline(Repository(connect(s.database_path)),
