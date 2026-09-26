@@ -1,0 +1,14 @@
+services:
+  api:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      EHR_BASE_URL: http://mock-ehr:9000
+      DATABASE_PATH: /app/data/referralflow.db
+      RETRY_INTERVAL_SECONDS: "10"
+    volumes: ["./data:/app/data"]
+    depends_on: [mock-ehr]
+  mock-ehr:
+    build: .
+    command: ["python", "scripts/mock_ehr.py", "--port", "9000", "--fail-first", "1"]
+    ports: ["9000:9000"]

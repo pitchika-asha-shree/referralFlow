@@ -1,0 +1,12 @@
+[project]
+name = "referralflow"
+version = "1.0.0"
+description = "Healthcare referral intake automation: document -> fields -> validation -> routing -> signed webhook"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110

@@ -1,0 +1,41 @@
+# Sunrise Medical Supply — durable medical equipment (CPAP, wheelchairs, oxygen).
+client_id: sunrise_dme
+name: Sunrise Medical Supply
+
+required_fields:
+  - patient_name
+  - patient_dob
+  - insurance_payer
+  - insurance_member_id
+  - referring_npi
+  - reason_for_referral        # the equipment being ordered
+
+min_confidence: 0.75
+
+webhook:
+  url: ${EHR_BASE_URL}/webhooks/sunrise_dme
+  secret_env: SUNRISE_DME_WEBHOOK_SECRET
+  max_attempts: 4
+
+routing:
+  rules:
+    - name: medicare needs documentation check
+      when:
+        all:
+          - { field: insurance_payer, op: contains, value: medicare }
+          - { field: reason_for_referral, op: exists }
+      queue: medicare-documentation
+      priority: high
+    - name: sleep apnea equipment
+      when:
+        any:
+          - { field: diagnosis_codes, op: starts_with, value: G47.3 }
+          - { field: reason_for_referral, op: contains, value: cpap }
+      queue: sleep-equipment
+  default:
+    queue: dme-intake
+
+field_map:
+  insurance_member_id: member_number
+  referring_npi: prescriber_npi
+  reason_for_referral: equipment_requested

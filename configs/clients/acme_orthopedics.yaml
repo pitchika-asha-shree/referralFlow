@@ -1,0 +1,52 @@
+# Acme Orthopedics — specialty practice receiving referrals from primary care.
+client_id: acme_ortho
+name: Acme Orthopedics
+
+# Referrals missing any of these go to a human instead of the EHR.
+required_fields:
+  - patient_name
+  - patient_dob
+  - insurance_payer
+  - insurance_member_id
+  - referring_npi
+  - diagnosis_codes
+
+# Fields extracted with lower confidence than this are held for review.
+min_confidence: 0.8
+
+webhook:
+  url: ${EHR_BASE_URL}/webhooks/acme_ortho
+  secret_env: ACME_ORTHO_WEBHOOK_SECRET   # the secret itself is never stored in git
+  max_attempts: 5
+  timeout_seconds: 10
+
+routing:
+  rules:                                  # first match wins
+    - name: urgent referral
+      when: { field: urgency, op: equals, value: urgent }
+      queue: ortho-urgent
+      priority: high
+    - name: spine
+      when:
+        field: diagnosis_codes
+        op: starts_with
+        value: [M48, M50, M51, M54]       # spinal stenosis, disc disorders, back pain
+      queue: spine-clinic
+    - name: knee osteoarthritis
+      when: { field: diagnosis_codes, op: starts_with, value: M17 }
+      queue: joint-replacement
+  default:
+    queue: ortho-general
+    priority: normal
+
+# Acme's EHR expects camelCase keys.
+field_map:
+  patient_name: patientName
+  patient_dob: dateOfBirth
+  patient_phone: phone
+  insurance_payer: payerName
+  insurance_member_id: memberId
+  referring_provider: referringProvider
+  referring_npi: referringNpi
+  diagnosis_codes: icd10Codes
+  reason_for_referral: reason

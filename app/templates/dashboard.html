@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% set labels = {"needs_review": "Needs review", "routed": "Awaiting delivery", "delivered": "Delivered",
+                 "delivery_failed": "Delivery failed", "received": "Received"} %}
+{% block header %}
+  {% set total = counts.values()|sum %}
+  <p>{{ total }} referral{{ "" if total == 1 else "s" }}
+    {%- for key in ["needs_review", "delivery_failed", "routed", "delivered"] if counts.get(key) %},
+      <a href="/?status={{ key }}">{{ counts[key] }} {{ labels[key]|lower }}</a>
+    {%- endfor %}
+  </p>
+{% endblock %}
+{% block main %}
+<div class="grid">
+  <section>
+    <div class="panel">
+      <h2>Add a referral</h2>
+      <form id="upload" class="inline">
+        <label>Client
+          <select name="client">{% for c in clients %}<option>{{ c }}</option>{% endfor %}</select>
+        </label>
+        <input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.txt" required aria-label="Referral document">
+        <button type="submit">Process document</button>
+      </form>
+      <div id="upload-msg" class="notice" role="status"></div>
+    </div>
+
+    <div class="panel">
+      <h2>{% if active_status %}{{ labels.get(active_status, active_status) }} <a class="small" href="/">show all</a>{% else %}Recent referrals{% endif %}</h2>
+      {% if referrals %}
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Patient</th><th>Client</th><th>Status</th><th>Queue</th><th>Document</th><th>Received</th></tr></thead>
+        <tbody>
+        {% for r in referrals %}
+          <tr>
+            <td><a href="/referrals/{{ r.id }}">{{ r.fields.patient_name.value if r.fields.patient_name else "Unknown patient" }}</a></td>
+            <td>{{ r.client_id }}</td>
+            <td><span class="status {{ r.status }}">{{ labels.get(r.status, r.status) }}</span></td>
+            <td>{{ r.queue or "–" }}{% if r.priority == "high" %} <strong class="small">high</strong>{% endif %}</td>
+            <td class="small">{{ r.filename }}{% if r.text_method == "ocr" %} <span class="muted">(OCR)</span>{% endif %}</td>
+            <td class="small muted">{{ r.created_at[:16].replace("T", " ") }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}
+        <p class="muted">No referrals yet. Upload a document above, or run <code>python -m app.cli ingest acme_ortho samples/*.pdf</code>.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <aside class="panel">
+    <h2>Open tickets ({{ tickets|length }})</h2>
+    {% for t in tickets %}
+      <div style="padding:10px 0; border-top:1px solid #eceee8">
+        <div class="small muted">{{ t.category.replace("_", " ")|capitalize }} for {{ t.client_id }}</div>
+        <a href="/referrals/{{ t.referral_id }}">{{ t.summary }}</a>
+        <div class="small" style="white-space:pre-line">{{ t.details }}</div>
+      </div>
+    {% else %}
+      <p class="muted">Nothing needs attention.</p>
+    {% endfor %}
+  </aside>
+</div>
+
+<script>
+document.getElementById("upload").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target, msg = document.getElementById("upload-msg");
+  const data = new FormData();
+  data.append("file", form.file.files[0]);
+  msg.className = "notice show"; msg.textContent = "Processing…";
+  try {
+    const res = await fetch(`/v1/clients/${form.client.value}/referrals`, {method: "POST", body: data});
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.detail || res.statusText);
+    location.href = `/referrals/${body.referral.id}`;
+  } catch (err) {
+    msg.className = "notice show error"; msg.textContent = `Upload failed: ${err.message}`;
+  }
+});
+</script>
+{% endblock %}

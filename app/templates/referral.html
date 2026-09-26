@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% set labels = {"needs_review": "Needs review", "routed": "Awaiting delivery", "delivered": "Delivered",
+                 "delivery_failed": "Delivery failed", "received": "Received"} %}
+{% set pretty = {"patient_name": "Patient name", "patient_dob": "Date of birth", "patient_phone": "Phone",
+                 "insurance_payer": "Insurance", "insurance_member_id": "Member ID",
+                 "referring_provider": "Referring provider", "referring_npi": "Referring NPI",
+                 "diagnosis_codes": "Diagnosis codes", "reason_for_referral": "Reason for referral",
+                 "urgency": "Urgency"} %}
+{% set editable = r.status in ["needs_review", "delivery_failed"] %}
+{% set issue_fields = r.issues|map(attribute="field")|list %}
+{% block title %}{{ r.fields.patient_name.value if r.fields.patient_name else r.filename }} | ReferralFlow{% endblock %}
+{% block head %}
+<style>
+  .meter { height: 4px; background: #eceee8; border-radius: 2px; width: 96px; margin-top: 4px; }
+  .meter span { display: block; height: 100%; border-radius: 2px; background: var(--ok-fg); }
+  .meter.low span { background: var(--review-fg); }
+  tr.flagged td { background: #fffaf0; }
+  .issue { color: var(--review-fg); font-size: 13px; }
+  .issue.error { color: var(--fail-fg); }
+  ol.trail { list-style: none; padding: 0; margin: 0; }
+  ol.trail li { padding: 8px 0 8px 16px; border-left: 2px solid var(--rule); position: relative; }
+  ol.trail li::before { content: ""; position: absolute; left: -5px; top: 14px; width: 8px; height: 8px;
+                        border-radius: 50%; background: var(--toner); }
+  pre.doc { background: #fdfdfb; border: 1px solid var(--rule); padding: 14px; font-size: 12.5px;
+            line-height: 1.45; white-space: pre-wrap; max-height: 420px; overflow: auto; }
+  td input { width: 100%; }
+</style>
+{% endblock %}
+{% block header %}
+  <p><span class="status {{ r.status }}">{{ labels.get(r.status, r.status) }}</span>
+     {{ r.client_id }}{% if r.queue %}, routed to <strong>{{ r.queue }}</strong> ({{ r.priority }} priority, rule “{{ r.routing_rule }}”){% endif %}</p>
+{% endblock %}
+{% block main %}
+<div class="grid">
+  <section>
+    <div class="panel">
+      <h2>{{ r.fields.patient_name.value if r.fields.patient_name else "Unknown patient" }}</h2>
+      <p class="small muted" style="margin-top:-8px">{{ r.filename }}, read via {{ r.text_method or "n/a" }}. SHA-256 {{ r.document_sha256[:12] }}…</p>
+
+      {% if editable %}<form id="review">{% endif %}
+      <div class="scroll">
+      <table>
+        <thead><tr><th style="width:26%">Field</th><th>Value</th><th style="width:130px">Confidence</th></tr></thead>
+        <tbody>
+        {% for name in field_order %}
+          {% set f = r.fields.get(name) %}
+          <tr class="{{ 'flagged' if name in issue_fields }}">
+            <td>{{ pretty.get(name, name) }}</td>
+            <td>
+              {% if editable %}
+                <input name="{{ name }}" value="{{ (f.value|join(', ') if f.value is iterable and f.value is not string else f.value) if f else '' }}"
+                       data-original="{{ (f.value|join(', ') if f.value is iterable and f.value is not string else f.value) if f else '' }}" aria-label="{{ pretty.get(name, name) }}">
+              {% elif f %}
+                {{ f.value|join(", ") if f.value is iterable and f.value is not string else f.value }}
+              {% else %}<span class="muted">not found</span>{% endif %}
+              {% for i in r.issues if i.field == name %}
+                <div class="issue {{ i.severity }}">{{ i.message }}</div>
+              {% endfor %}
+            </td>
+            <td class="small">
+              {% if f %}
+                {{ "%.0f"|format(f.confidence * 100) }}% <span class="muted">{{ f.source }}</span>
+                <div class="meter {{ 'low' if f.confidence < 0.8 }}"><span style="width:{{ (f.confidence * 100)|round }}%"></span></div>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% for i in r.issues if i.field not in field_order %}
+        <p class="issue error">{{ i.field }}: {{ i.message }}</p>
+      {% endfor %}
+      {% if editable %}
+        <div class="inline" style="display:flex; gap:10px; margin-top:14px; align-items:center; flex-wrap:wrap">
+          <label>Your name <input name="__reviewer" required value="ops"></label>
+          <button type="submit">Save corrections and send</button>
+          {% if r.status == "delivery_failed" %}<button type="button" class="secondary" id="redeliver">Send again without changes</button>{% endif %}
+        </div>
+      </form>
+      <div id="msg" class="notice" role="status"></div>
+      {% endif %}
+    </div>
+
+    <div class="panel">
+      <h2>Document text</h2>
+      <pre class="doc">{{ r.raw_text or "No text could be read from this document." }}</pre>
+    </div>
+
+    {% if payload_preview %}
+    <div class="panel">
+      <h2>Webhook payload sent to {{ r.client_id }}</h2>
+      <pre class="doc">{{ payload_preview }}</pre>
+    </div>
+    {% endif %}
+  </section>
+
+  <aside>
+    <div class="panel">
+      <h2>History</h2>
+      <ol class="trail">
+        {% for e in r.events %}
+          <li><div class="small muted">{{ e.at[:19].replace("T", " ") }}, {{ e.actor }}</div>
+              {% if e.to_status and e.to_status != e.from_status %}<span class="status {{ e.to_status }}">{{ labels.get(e.to_status, e.to_status) }}</span>{% endif %}
+              <div class="small">{{ e.note }}</div></li>
+        {% endfor %}
+      </ol>
+    </div>
+    <div class="panel">
+      <h2>Deliveries</h2>
+      {% for d in r.deliveries %}
+        <p class="small"><strong>{{ d.status }}</strong> after {{ d.attempts }} of {{ d.max_attempts }} attempts
+          {% if d.last_status_code %}(last HTTP {{ d.last_status_code }}){% endif %}
+          {% if d.status == "pending" %}<br>next try {{ d.next_attempt_at[:19].replace("T", " ") }}{% endif %}
+          {% if d.last_error %}<br><span class="muted">{{ d.last_error }}</span>{% endif %}</p>
+      {% else %}<p class="muted small">Nothing sent yet.</p>{% endfor %}
+    </div>
+    <div class="panel">
+      <h2>Tickets</h2>
+      {% for t in r.tickets %}
+        <p class="small"><strong>{{ t.status|capitalize }}</strong>: {{ t.summary }}
+          {% if t.resolution_note %}<br><span class="muted">{{ t.resolution_note }}</span>{% endif %}</p>
+      {% else %}<p class="muted small">No tickets.</p>{% endfor %}
+    </div>
+  </aside>
+</div>
+
+{% if editable %}
+<script>
+const msg = document.getElementById("msg");
+async function post(url, body) {
+  msg.className = "notice show"; msg.textContent = "Sending…";
+  const res = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const data = await res.json();
+  if (!res.ok) { msg.className = "notice show error"; msg.textContent = data.detail || JSON.stringify(data); return; }
+  location.reload();
+}
+document.getElementById("review").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const corrections = {};
+  for (const input of e.target.querySelectorAll("input[data-original]")) {
+    if (input.value.trim() !== input.dataset.original) corrections[input.name] = input.value.trim();
+  }
+  post("/v1/referrals/{{ r.id }}/review", {reviewer: e.target.__reviewer.value, corrections});
+});
+const redeliver = document.getElementById("redeliver");
+if (redeliver) redeliver.addEventListener("click", () =>
+  post("/v1/referrals/{{ r.id }}/redeliver", {actor: document.querySelector("[name=__reviewer]").value}));
+</script>
+{% endif %}
+{% endblock %}
